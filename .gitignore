@@ -1,0 +1,36 @@
+# Python
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtualenvs
+venv/
+.venv/
+env/
+
+# Environment / secrets
+.env
+.env.local
+
+# Editors / tooling
+.vscode/
+.idea/
+*.swp
+*~
+
+# Claude Code (commit shared settings.json, ignore per-user overrides)
+.claude/settings.local.json
+.claude/.credentials*
+
+# OS
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
