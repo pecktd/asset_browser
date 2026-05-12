@@ -1,0 +1,61 @@
+import getpass
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import maya.cmds as mc
+
+from asset_browser.models import WorkFile
+
+
+def get_maya_scene_path() -> Path:
+    """Returns the current Maya scene file path as a Path object."""
+    scene_path_str = mc.file(q=True, sn=True)
+    if not scene_path_str:
+        location_list = mc.file(q=True, l=True)
+        if location_list:
+            scene_path_str = location_list[0]
+
+    return Path(scene_path_str)
+
+
+def group_files(folder_path: Path) -> dict[str, dict[str, str] | list[str]]:
+    """Groups work files in a folder by `variant:task`, then by `ver:sub_ver:user`.
+
+    Files that fail to parse are collected under the "error" key.
+    """
+    result: dict[str, dict[str, str] | list[str]] = {"error": []}
+    files = [f for f in folder_path.iterdir() if f.is_file() and f.suffix in (".ma", ".mb")]
+
+    for file in files:
+        work_file = WorkFile.from_file_path(file)
+
+        if not work_file:
+            result["error"].append(file.name)
+            continue
+
+        var_task = f"{work_file.var}:{work_file.task}"
+        ver_user = f"{work_file.ver:03d}:{work_file.sub_ver:02d}:{work_file.user}"
+
+        if var_task not in result:
+            result[var_task] = {}
+
+        result[var_task][ver_user] = file.name
+
+    return result
+
+
+def current_user() -> str:
+    """Returns the current OS user, cross-platform."""
+    return getpass.getuser()
+
+
+def open_folder(path: Path) -> None:
+    """Open a folder in the OS file manager, cross-platform."""
+    if sys.platform == "win32":
+        os.startfile(str(path))
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", str(path)])
+    else:
+        subprocess.Popen(["xdg-open", str(path)])
