@@ -153,28 +153,86 @@ class ListItemWidget(QtWidgets.QWidget):
                 self.list.setCurrentRow(i)
 
 
-class ListItemWithFilterWidget(ListItemWidget):
-    def __init__(self, name: str, path):
+class TypeToFilterListWidget(ListItemWidget):
+    """A list you filter by simply typing while it has focus.
+
+    There is no persistent filter field. As soon as the user types, a small
+    transient query strip appears above the list showing the active query;
+    Backspace edits it and Escape clears it (and hides the strip again).
+    """
+
+    def __init__(self, name: str, path, with_create_button: bool = False):
         super().__init__(name, path)
-        self.filter_le = QtWidgets.QLineEdit()
-        self.filter_le.setAlignment(QtCore.Qt.AlignRight)
-        self.filter_le.setPlaceholderText("Filter...")
-        self.main_vl.addWidget(self.filter_le)
 
-        self.filter_le.textChanged.connect(self._filter)
+        self._filter_text = ""
 
-    def _filter(self):
-        current_text = self.filter_le.text()
+        # Transient query strip, sits between the header label and the list.
+        self.query_label = QtWidgets.QLabel()
+        self.query_label.setStyleSheet("color: #8ab4f8; padding: 2px;")
+        self.query_label.setVisible(False)
+        self.main_vl.insertWidget(1, self.query_label)
 
+        self.create_but = None
+        if with_create_button:
+            self.create_but = QtWidgets.QPushButton("Create")
+            self.main_vl.addWidget(self.create_but)
+
+        self.list.installEventFilter(self)
+
+    # ------- type-to-filter behavior -------
+
+    def eventFilter(self, obj, event):
+        if obj is self.list and event.type() == QtCore.QEvent.KeyPress:
+            if self._handle_key(event):
+                return True
+        return super().eventFilter(obj, event)
+
+    def _handle_key(self, event) -> bool:
+        key = event.key()
+
+        if key == QtCore.Qt.Key_Escape:
+            if self._filter_text:
+                self._set_filter("")
+                return True
+            return False
+
+        if key == QtCore.Qt.Key_Backspace:
+            if self._filter_text:
+                self._set_filter(self._filter_text[:-1])
+                return True
+            return False
+
+        # Let shortcuts (Ctrl/Alt/Meta) and navigation keys fall through to the list.
+        if event.modifiers() & (
+            QtCore.Qt.ControlModifier | QtCore.Qt.AltModifier | QtCore.Qt.MetaModifier
+        ):
+            return False
+
+        text = event.text()
+        if text and text.isprintable():
+            self._set_filter(self._filter_text + text)
+            return True
+
+        return False
+
+    def _set_filter(self, text: str):
+        self._filter_text = text
+        self._apply_filter()
+        self._update_query_label()
+
+    def _apply_filter(self):
+        needle = self._filter_text.lower()
         for i in range(self.list.count()):
-            current_item: ListWidgetItem = self.list.item(i)
-
-            if not current_text:
-                current_item.setHidden(False)
-                continue
-
+            current_item = self.list.item(i)
             if ListWidgetItem not in type(current_item).mro():
-                current_item.setHidden(True)
-            else:
-                if current_text not in current_item.name:
-                    current_item.setHidden(True)
+                current_item.setHidden(bool(needle))
+                continue
+            current_item.setHidden(needle not in current_item.name.lower())
+
+    def _update_query_label(self):
+        if self._filter_text:
+            self.query_label.setText(f"\U0001F50D  {self._filter_text}")
+            self.query_label.setVisible(True)
+        else:
+            self.query_label.clear()
+            self.query_label.setVisible(False)

@@ -1,4 +1,5 @@
 import getpass
+import json
 import os
 import subprocess
 import sys
@@ -7,6 +8,8 @@ from pathlib import Path
 import maya.cmds as mc
 
 from asset_browser.models import WorkFile
+
+_SESSION_OPTION_VAR = "assetBrowserLastSession"
 
 
 def get_maya_scene_path() -> Path:
@@ -49,6 +52,21 @@ def group_files(folder_path: Path) -> dict[str, dict[str, str] | list[str]]:
 def current_user() -> str:
     """Returns the current OS user, cross-platform."""
     return getpass.getuser()
+
+
+def save_session_state(state: dict) -> None:
+    """Persist the browser's last column selection across Maya sessions."""
+    mc.optionVar(sv=(_SESSION_OPTION_VAR, json.dumps(state)))
+
+
+def load_session_state() -> dict:
+    """Return the browser's last persisted column selection, or an empty dict."""
+    if not mc.optionVar(exists=_SESSION_OPTION_VAR):
+        return {}
+    try:
+        return json.loads(mc.optionVar(q=_SESSION_OPTION_VAR))
+    except (ValueError, TypeError):
+        return {}
 
 
 def open_folder(path: Path) -> None:
