@@ -3,6 +3,65 @@ from qtpy import QtCore, QtWidgets
 from asset_browser.utils import group_files
 
 
+class SettingsDialog(QtWidgets.QDialog):
+    """Modal preferences dialog, opened from ``File > Settings...``.
+
+    Edits the browser's persisted user preferences: which rigging workspace UI the
+    ``Open Workspace`` action launches, and the folder ``Create Workspace`` copies its
+    template workspaces from. Call :meth:`get_prefs` after ``exec_()`` returns truthy.
+    """
+
+    WORKSPACE_UIS = ("pkrig3", "megarig")
+
+    def __init__(self, parent, prefs: dict):
+        super().__init__(parent)
+
+        self.setWindowTitle("Asset Browser Settings")
+        self.setMinimumWidth(440)
+
+        form = QtWidgets.QFormLayout()
+
+        self.workspace_ui_cb = QtWidgets.QComboBox()
+        self.workspace_ui_cb.addItems(self.WORKSPACE_UIS)
+        current_ui = prefs.get("workspace_ui", self.WORKSPACE_UIS[0])
+        if current_ui in self.WORKSPACE_UIS:
+            self.workspace_ui_cb.setCurrentText(current_ui)
+        form.addRow("Open workspace with:", self.workspace_ui_cb)
+
+        self.template_le = QtWidgets.QLineEdit(prefs.get("workspace_template_root", ""))
+        browse_but = QtWidgets.QPushButton("...")
+        browse_but.setFixedWidth(30)
+        browse_but.clicked.connect(self._browse_template_root)
+        template_hl = QtWidgets.QHBoxLayout()
+        template_hl.setContentsMargins(0, 0, 0, 0)
+        template_hl.addWidget(self.template_le)
+        template_hl.addWidget(browse_but)
+        form.addRow("Workspace template root:", template_hl)
+
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Save | QtWidgets.QDialogButtonBox.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        main_vl = QtWidgets.QVBoxLayout(self)
+        main_vl.addLayout(form)
+        main_vl.addWidget(buttons)
+
+    def _browse_template_root(self):
+        folder = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "Workspace Template Root", self.template_le.text()
+        )
+        if folder:
+            self.template_le.setText(folder)
+
+    def get_prefs(self) -> dict:
+        return {
+            "workspace_ui": self.workspace_ui_cb.currentText(),
+            "workspace_template_root": self.template_le.text().strip(),
+        }
+
+
 class LineEditWidget(QtWidgets.QWidget):
     def __init__(self, name):
         super().__init__(None)

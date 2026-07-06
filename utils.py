@@ -1,6 +1,7 @@
 import getpass
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -10,6 +11,7 @@ import maya.cmds as mc
 from asset_browser.models import WorkFile
 
 _SESSION_OPTION_VAR = "assetBrowserLastSession"
+_PREFS_OPTION_VAR = "assetBrowserPrefs"
 
 
 def get_maya_scene_path() -> Path:
@@ -67,6 +69,26 @@ def load_session_state() -> dict:
         return json.loads(mc.optionVar(q=_SESSION_OPTION_VAR))
     except (ValueError, TypeError):
         return {}
+
+
+def save_prefs(prefs: dict) -> None:
+    """Persist the browser's user preferences across Maya sessions."""
+    mc.optionVar(sv=(_PREFS_OPTION_VAR, json.dumps(prefs)))
+
+
+def load_prefs() -> dict:
+    """Return the browser's persisted user preferences, or an empty dict."""
+    if not mc.optionVar(exists=_PREFS_OPTION_VAR):
+        return {}
+    try:
+        return json.loads(mc.optionVar(q=_PREFS_OPTION_VAR))
+    except (ValueError, TypeError):
+        return {}
+
+
+def copy_folder(src: Path, dst: Path) -> None:
+    """Recursively copy the folder ``src`` to a new folder ``dst`` (which must not yet exist)."""
+    shutil.copytree(str(src), str(dst))
 
 
 def open_folder(path: Path) -> None:
