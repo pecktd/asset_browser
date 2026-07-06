@@ -5,15 +5,23 @@ from qtpy import QtCore, QtGui, QtWidgets
 
 import maya.cmds as mc
 
-from pkrig3_ui import run_workspace
-
 from asset_browser.models import WorkFile
-from asset_browser.utils import current_user, get_maya_scene_path, open_folder
+from asset_browser.utils import (
+    copy_folder,
+    current_user,
+    get_maya_scene_path,
+    load_prefs,
+    load_session_state,
+    open_folder,
+    save_prefs,
+    save_session_state,
+)
 from asset_browser.widgets import (
     LineEditWidget,
     ListItemWidget,
-    ListItemWithFilterWidget,
+    SettingsDialog,
     SpinBoxWidget,
+    TypeToFilterListWidget,
 )
 
 
@@ -24,6 +32,7 @@ class AssetBrowser(QtWidgets.QMainWindow):
         super().__init__(parent)
 
         self.selected_path: Path
+        self.prefs: dict = load_prefs()
 
         self.setObjectName("AssetBrowser")
         self.setWindowTitle("AssetBrowser")
@@ -75,7 +84,9 @@ class AssetBrowser(QtWidgets.QMainWindow):
         self.project_vl.setSpacing(0)
         self.main_hl.addLayout(self.project_vl)
 
-        self.project_widget = ListItemWithFilterWidget("Projects", Path(os.getenv("PROJ_ROOT")))
+        self.project_widget = TypeToFilterListWidget(
+            "Projects", Path(os.getenv("PROJ_ROOT")), with_create_button=True
+        )
         self.project_vl.addWidget(self.project_widget)
 
         # Asset / step column
@@ -83,21 +94,26 @@ class AssetBrowser(QtWidgets.QMainWindow):
         self.asset_vl.setSpacing(0)
         self.main_hl.addLayout(self.asset_vl)
 
-        self.asset_widget = ListItemWithFilterWidget("Assets", "")
+        self.asset_widget = TypeToFilterListWidget("Assets", "", with_create_button=True)
         self.asset_vl.addWidget(self.asset_widget)
+
+        self.asset_step_line = QtWidgets.QFrame(self.central_widget)
+        self.asset_step_line.setFrameShape(QtWidgets.QFrame.HLine)
+        self.asset_step_line.setFrameShadow(QtWidgets.QFrame.Sunken)
+        self.asset_vl.addWidget(self.asset_step_line)
 
         self.step_widget = ListItemWidget("Steps", "")
         self.asset_vl.addWidget(self.step_widget)
 
         self.asset_vl.setStretch(0, 3)
-        self.asset_vl.setStretch(1, 1)
+        self.asset_vl.setStretch(2, 1)
 
         # File column
         self.file_vl = QtWidgets.QVBoxLayout()
         self.file_vl.setSpacing(0)
         self.main_hl.addLayout(self.file_vl)
 
-        self.file_widget = ListItemWithFilterWidget("Files", "")
+        self.file_widget = TypeToFilterListWidget("Files", "")
         self.file_vl.addWidget(self.file_widget)
 
         # Rigging column
@@ -108,19 +124,28 @@ class AssetBrowser(QtWidgets.QMainWindow):
         self.variant_widget = ListItemWidget("Variants", "")
         self.rigging_component_vl.addWidget(self.variant_widget)
 
+        self.create_variant_but = QtWidgets.QPushButton("Create Variant")
+        self.rigging_component_vl.addWidget(self.create_variant_but)
+
         self.workspace_widget = ListItemWidget("Workspaces", "")
         self.rigging_component_vl.addWidget(self.workspace_widget)
 
+        # Open / Create sit side by side under the workspace list: Open 75%, Create 25%.
         self.launch_workspace_but = QtWidgets.QPushButton("Open Workspace")
-        self.rigging_component_vl.addWidget(self.launch_workspace_but)
+        self.create_workspace_but = QtWidgets.QPushButton("Create")
+        self.workspace_but_hl = QtWidgets.QHBoxLayout()
+        self.workspace_but_hl.setContentsMargins(0, 0, 0, 0)
+        self.workspace_but_hl.addWidget(self.launch_workspace_but, 3)
+        self.workspace_but_hl.addWidget(self.create_workspace_but, 1)
+        self.rigging_component_vl.addLayout(self.workspace_but_hl)
 
         self.rigging_component_widget = ListItemWidget("Rigging Components", "")
         self.rigging_component_vl.addWidget(self.rigging_component_widget)
 
-        self.rigging_component_vl.setStretch(0, 1)
-        self.rigging_component_vl.setStretch(1, 2)
-        self.rigging_component_vl.setStretch(2, 1)
-        self.rigging_component_vl.setStretch(3, 3)
+        # Buttons keep their natural height; the three lists share the rest.
+        self.rigging_component_vl.setStretch(0, 2)  # variants
+        self.rigging_component_vl.setStretch(2, 2)  # workspaces
+        self.rigging_component_vl.setStretch(4, 3)  # rigging components
 
         self.main_hl.setStretch(0, 1)
         self.main_hl.setStretch(1, 2)
@@ -176,6 +201,8 @@ class AssetBrowser(QtWidgets.QMainWindow):
         add_action("&Import", self._import_triggered, "Ctrl+I")
         add_action("&Create Reference...", self._ref_triggered, "Ctrl+R")
         add_action("Open &Workspace", self._open_workspace_triggered, "Ctrl+Shift+O")
+        self.file_menu.addSeparator()
+        add_action("&Settings...", self._open_settings_triggered)
 
     def _connect_signals(self):
         def on_click_or_select(list_widget, handler):
@@ -194,6 +221,10 @@ class AssetBrowser(QtWidgets.QMainWindow):
         self.rigging_component_widget.list.itemDoubleClicked.connect(self._file_double_clicked)
         self.launch_workspace_but.clicked.connect(self._open_workspace_triggered)
         self.save_but.clicked.connect(self._save_clicked)
+        self.project_widget.create_but.clicked.connect(self._create_project_clicked)
+        self.asset_widget.create_but.clicked.connect(self._create_asset_clicked)
+        self.create_variant_but.clicked.connect(self._create_variant_clicked)
+        self.create_workspace_but.clicked.connect(self._create_workspace_clicked)
 
     def _apply_style(self):
         self.setStyleSheet(
@@ -205,15 +236,19 @@ class AssetBrowser(QtWidgets.QMainWindow):
         self._show_all_rigging_uis(False)
         self.project_widget.pop_folders()
 
-        self._restore_selection_from_scene(get_maya_scene_path())
+        # Prefer the open scene's location; fall back to the last session on exit.
+        if not self._restore_selection_from_scene(get_maya_scene_path()):
+            self._restore_session_state()
 
         self.user_le.line_edit.setText(current_user())
 
-    def _restore_selection_from_scene(self, scene_path: Path):
+    def _restore_selection_from_scene(self, scene_path: Path) -> bool:
         """Mirror the open Maya scene's location in the browser columns.
 
         Regular scene layout:    <project>/assets/<asset>/work/<step>/<file>
         Workspace scene layout:  <project>/assets/<asset>/work/<step>/<variant>/<workspace>/<file>
+
+        Returns True if the scene matched the pipeline layout and columns were selected.
         """
         parts = scene_path.parts
         work_idx = next(
@@ -221,7 +256,7 @@ class AssetBrowser(QtWidgets.QMainWindow):
             None,
         )
         if work_idx is None or len(parts) < work_idx + 3:
-            return
+            return False
 
         self.project_widget.select_by_name(parts[work_idx - 3])
         self.asset_widget.select_by_name(parts[work_idx - 1])
@@ -235,12 +270,52 @@ class AssetBrowser(QtWidgets.QMainWindow):
         else:
             self.file_widget.select_by_name(scene_path.name)
 
+        return True
+
+    # ------- Session persistence (restore last location when no scene is open) -------
+
+    _SESSION_WIDGETS = (
+        ("project", "project_widget"),
+        ("asset", "asset_widget"),
+        ("step", "step_widget"),
+        ("variant", "variant_widget"),
+        ("workspace", "workspace_widget"),
+        ("file", "file_widget"),
+        ("rigging_component", "rigging_component_widget"),
+    )
+
+    def _save_session_state(self):
+        state = {key: getattr(self, attr).get_selected() for key, attr in self._SESSION_WIDGETS}
+        save_session_state(state)
+
+    def _restore_session_state(self):
+        state = load_session_state()
+        if not state:
+            return
+
+        # Select column-by-column; each selection cascades and populates the next.
+        for key, attr in self._SESSION_WIDGETS:
+            name = state.get(key)
+            if name:
+                getattr(self, attr).select_by_name(name)
+
+    def closeEvent(self, event):
+        self._save_session_state()
+        super().closeEvent(event)
+
     def _show_all_rigging_uis(self, show: bool):
-        for i in range(self.rigging_component_vl.count()):
-            item: QtWidgets.QLayoutItem = self.rigging_component_vl.itemAt(i)
+        self._set_layout_widgets_visible(self.rigging_component_vl, show)
+
+    @classmethod
+    def _set_layout_widgets_visible(cls, layout: QtWidgets.QLayout, show: bool):
+        """Recursively toggle every widget in ``layout`` (including nested layouts)."""
+        for i in range(layout.count()):
+            item: QtWidgets.QLayoutItem = layout.itemAt(i)
             widget: QtWidgets.QWidget = item.widget()
             if widget is not None:
                 widget.setVisible(show)
+            elif item.layout() is not None:
+                cls._set_layout_widgets_visible(item.layout(), show)
 
     # ------- Cascade helper -------
 
@@ -278,6 +353,125 @@ class AssetBrowser(QtWidgets.QMainWindow):
             return
         self.asset_widget.path = path
         self.asset_widget.pop_folders()
+
+    def _create_project_clicked(self):
+        self._create_folder(self.project_widget, "Create Project", "Project name:")
+
+    def _create_asset_clicked(self):
+        self._create_folder(
+            self.asset_widget, "Create Asset", "Asset name:", subfolders=("work", "rig")
+        )
+
+    def _create_variant_clicked(self):
+        """Create an empty variant folder in the current step's folder."""
+        self._create_folder(self.variant_widget, "Create Variant", "Variant name:")
+
+    def _create_workspace_clicked(self):
+        """Create a workspace in the selected variant.
+
+        If a workspace template root is configured (``File > Settings...``) and holds template
+        folders, the user picks one and it is copied verbatim into the variant. Otherwise an
+        empty workspace folder is created.
+        """
+        title = "Create Workspace"
+        dest_root = self.workspace_widget.path
+        if not isinstance(dest_root, Path) or not dest_root.exists():
+            mc.confirmDialog(title=title, message="Select a variant first.", button=["OK"])
+            return
+
+        template_src = self._pick_workspace_template(title)
+        if template_src is False:  # a template picker was shown but cancelled
+            return
+
+        result = mc.promptDialog(
+            title=title,
+            message="Workspace name:",
+            button=["Create", "Cancel"],
+            defaultButton="Create",
+            cancelButton="Cancel",
+            dismissString="Cancel",
+        )
+        if result != "Create":
+            return
+
+        name = mc.promptDialog(q=True, text=True).strip()
+        if not name:
+            return
+
+        dest = dest_root / name
+        if dest.exists():
+            mc.confirmDialog(title=title, message=f"'{name}' already exists.", button=["OK"])
+            return
+
+        if template_src:
+            copy_folder(template_src, dest)
+        else:
+            dest.mkdir(parents=True)
+        self.workspace_widget.pop_folders()
+        self.workspace_widget.select_by_name(name)
+
+    def _pick_workspace_template(self, title: str):
+        """Prompt for a template workspace to copy.
+
+        Returns the chosen template ``Path``, ``None`` if no template root is configured or it
+        holds no templates (caller then creates an empty folder), or ``False`` if the user
+        cancelled the picker.
+        """
+        template_root = self.prefs.get("workspace_template_root", "")
+        if not template_root:
+            return None
+
+        template_root = Path(template_root)
+        if not template_root.is_dir():
+            return None
+
+        templates = sorted(
+            f.name for f in template_root.iterdir() if f.is_dir() and not f.name.startswith(".")
+        )
+        if not templates:
+            return None
+
+        template, ok = QtWidgets.QInputDialog.getItem(
+            self, title, "Template workspace:", templates, 0, False
+        )
+        if not ok:
+            return False
+        return template_root / template
+
+    def _create_folder(self, widget, title: str, message: str, subfolders: tuple = ()):
+        """Prompt for a name and create ``<widget.path>/<name>/<*subfolders>``."""
+        base = widget.path
+        if not isinstance(base, Path) or not base.exists():
+            mc.confirmDialog(title=title, message="Select a parent item first.", button=["OK"])
+            return
+
+        result = mc.promptDialog(
+            title=title,
+            message=message,
+            button=["Create", "Cancel"],
+            defaultButton="Create",
+            cancelButton="Cancel",
+            dismissString="Cancel",
+        )
+        if result != "Create":
+            return
+
+        name = mc.promptDialog(q=True, text=True).strip()
+        if not name:
+            return
+
+        new_path = base / name
+        if new_path.exists():
+            mc.confirmDialog(
+                title=title,
+                message=f"'{name}' already exists.",
+                button=["OK"],
+            )
+            return
+
+        new_path.joinpath(*subfolders).mkdir(parents=True)
+        widget.pop_folders()
+        widget.select_by_name(name)
 
     def _asset_clicked(self):
         old_step = self.step_widget.get_selected()
@@ -377,9 +571,34 @@ class AssetBrowser(QtWidgets.QMainWindow):
             mc.file(self.selected_path, r=True, ns=self.selected_path.stem)
 
     def _open_workspace_triggered(self):
+        """Launch the rigging workspace UI chosen in Settings.
+
+        Imported lazily so the browser still loads in environments where the selected UI
+        (``pkrig3_ui`` at home / ``megarig_ui`` at the office) is not installed.
+        """
+        ui_choice = self.prefs.get("workspace_ui", "pkrig3")
+        try:
+            if ui_choice == "megarig":
+                from megarig_ui import run_workspace
+            else:
+                from pkrig3_ui import run_workspace
+        except ImportError:
+            mc.confirmDialog(
+                title="Open Workspace",
+                message=f"The '{ui_choice}' workspace UI is not available in this environment.",
+                button=["OK"],
+            )
+            return
+
         workspace = run_workspace.maya_run()
         workspace.folder_browser.line_edit.setText(str(self.workspace_widget.path))
         workspace.workspace_list.select_by_name(self.workspace_widget.get_selected())
+
+    def _open_settings_triggered(self):
+        dialog = SettingsDialog(self, self.prefs)
+        if dialog.exec_():
+            self.prefs = dialog.get_prefs()
+            save_prefs(self.prefs)
 
     @staticmethod
     def _confirm(title: str, message) -> bool:
