@@ -355,7 +355,9 @@ class AssetBrowser(QtWidgets.QMainWindow):
         self.asset_widget.pop_folders()
 
     def _create_project_clicked(self):
-        self._create_folder(self.project_widget, "Create Project", "Project name:")
+        self._create_folder(
+            self.project_widget, "Create Project", "Project name:", subfolders=("assets",)
+        )
 
     def _create_asset_clicked(self):
         self._create_folder(
